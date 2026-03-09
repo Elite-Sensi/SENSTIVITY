@@ -89,18 +89,21 @@ def predict_with_nn(device, fingers, gyro, skill):
     try:
         X = encode_input(device, fingers, gyro, skill).reshape(1, -1)
         models = MODEL["models"]
-        def get_section(name, keys):
+        def get_section(name, keys, gyro_cap=False):
             net   = models[name]["net"]
             scale = models[name]["scale"]
             pred  = net.predict(X)[0] * scale
             pred  = np.clip(pred, 1, scale)
-            return {k: int(round(float(v))) for k, v in zip(keys, pred)}
+            result = {k: int(round(float(v))) for k, v in zip(keys, pred)}
+            if gyro_cap:
+                result = {k: min(v, 400) for k, v in result.items()}
+            return result
         return {
             "camera":        get_section("camera",        SCOPE_KEYS),
             "ads":           get_section("ads",           SCOPE_KEYS),
             "free_look":     get_section("free_look",     FL_KEYS),
-            "gyroscope":     get_section("gyroscope",     SCOPE_KEYS) if gyro else None,
-            "gyroscope_ads": get_section("gyroscope_ads", SCOPE_KEYS) if gyro else None,
+            "gyroscope":     get_section("gyroscope",     SCOPE_KEYS, gyro_cap=True) if gyro else None,
+            "gyroscope_ads": get_section("gyroscope_ads", SCOPE_KEYS, gyro_cap=True) if gyro else None,
         }
     except Exception as e:
         print(f"NN prediction failed: {e}")
@@ -124,11 +127,16 @@ def average_sensitivity(entries, key):
     keys = valid[0].keys()
     return {k: int(round(sum(v[k] for v in valid) / len(valid))) for k in keys}
 
-def apply_skill(d, skill):
+GYRO_KEYS = {"gyroscope", "gyroscope_ads"}
+
+def apply_skill(d, skill, is_gyro=False):
     if not d:
         return None
     m = 0.85 if skill == "beginner" else (1.10 if skill == "pro" else 1.0)
-    return {k: int(round(v * m)) for k, v in d.items()}
+    result = {k: int(round(v * m)) for k, v in d.items()}
+    if is_gyro:
+        result = {k: min(v, 400) for k, v in result.items()}
+    return result
 
 DEFAULT_CAM  = {"tpp":100,"fpp":90,"red_dot":55,"scope_2x":42,"scope_3x":33,"scope_4x":26,"scope_6x":19,"scope_8x":14}
 DEFAULT_ADS  = {"tpp":52,"fpp":57,"red_dot":52,"scope_2x":43,"scope_3x":36,"scope_4x":29,"scope_6x":21,"scope_8x":16}
@@ -179,8 +187,8 @@ def generate_sensitivity(device: str, fingers: str, gyro: bool, skill_level: Opt
         "camera":        apply_skill(average_sensitivity(matches, "camera"),     skill) or DEFAULT_CAM,
         "ads":           apply_skill(average_sensitivity(matches, "ads"),        skill) or DEFAULT_ADS,
         "free_look":     apply_skill(average_sensitivity(matches, "free_look"),  skill) or DEFAULT_FL,
-        "gyroscope":     apply_skill(average_sensitivity(gyro_matches, "gyroscope"),    skill) if gyro else None,
-        "gyroscope_ads": apply_skill(average_sensitivity(gyra_matches, "gyroscope_ads"),skill) if gyro else None,
+        "gyroscope":     apply_skill(average_sensitivity(gyro_matches, "gyroscope"),    skill, is_gyro=True) if gyro else None,
+        "gyroscope_ads": apply_skill(average_sensitivity(gyra_matches, "gyroscope_ads"),skill, is_gyro=True) if gyro else None,
         "confidence_score": confidence,
         "players_used": [p["player_name"] for p in matches],
     }
